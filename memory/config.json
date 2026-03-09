@@ -1,0 +1,20 @@
+{
+  "short_term_ttl_days": 7,
+  "importance_threshold": 5,
+  "emotion_weights": {
+    "positive_excitement": 1.5,
+    "negative_frustration": 1.3,
+    "repeated_topic": 1.4,
+    "decision_point": 2.0,
+    "preference_expressed": 1.8
+  },
+  "vector_search": {
+    "enabled": false,
+    "model": "text-embedding-3-small",
+    "dimension": 1536
+  },
+  "auto_cleanup": {
+    "enabled": true,
+    "schedule": "0 3 * * 0"
+  }
+}
