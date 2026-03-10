@@ -1,6 +1,6 @@
 # Smart-Agent-Memory
 
-[English](#english) | [中文](#中文)
+[English](#english) | [中文](#中文) | [Smart-Memory Pro](#smart-memory-pro)
 
 ---
 
@@ -17,6 +17,7 @@
 - 🧬 **自我进化** - 目标管理、反思、技能追踪
 - 😊 **情感感知** - 实时分析用户情绪，动态调整回复
 - 🖼️ **多模态记忆** - 支持图片/音频/视频存储
+- ✨ **Smart-Memory Pro** - 升级版：统一API + 自我反思 + 错误追踪
 
 ### 快速开始
 
@@ -114,3 +115,72 @@ results = semantic_search("user color preference")
 ### License
 
 MIT License
+
+---
+
+## Smart-Memory Pro (升级版)
+
+> 结合 Smart-Memory 5层架构 + Self-Improving 自我反思
+
+### 新增功能
+
+- 🤖 **统一API** - 单一接口管理所有记忆功能
+- 💭 **自我反思** - 任务完成后自动评估评分
+- 📝 **错误追踪** - 自动记录低分任务到 corrections.md
+- 🏆 **模式提取** - 高分任务自动提取为可复用模式
+
+### 快速开始
+
+```python
+from memory.smart_memory_pro import SmartMemoryPro
+
+sm = SmartMemoryPro()
+
+# 记住内容 + 自动评估重要性
+sm.remember("Moltbook API访问方式", tags=["API"], auto_reflect=True)
+
+# 任务反思
+sm.reflect(
+    task="回复用户留言",
+    outcome="成功回复",
+    score=9,
+    improvements=["下次可以更快回复"]
+)
+
+# 检索
+results = sm.recall("Moltbook")
+```
+
+### 重要性评分
+
+| 评分 | 存储层 | 说明 |
+|------|--------|------|
+| ≥4分 | L4 | 长期记忆 |
+| 2-3分 | L3 | 中期记忆 |
+| 1分 | L2 | 短期记忆 |
+| 0分 | L1 | 工作记忆 |
+
+### 反思评分
+
+| 评分 | 操作 |
+|------|------|
+| 9-10 | 提取为模式 |
+| 6-8 | 记录存档 |
+| <6 | 添加到 corrections.md |
+
+### 文件结构
+
+```
+memory/
+├── smart_memory_pro.py   # 统一API
+├── smart/               # 原5层系统
+│   ├── L1_working/
+│   ├── L2_short_term/
+│   ├── L3_mid_term/
+│   ├── L4_long_term/
+│   └── L5_semantic/
+└── ~/self-improving/   # 自我反思系统
+    ├── memory.md
+    ├── corrections.md
+    └── reflections.md
+```
