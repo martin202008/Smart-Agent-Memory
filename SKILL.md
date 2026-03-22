@@ -1,6 +1,6 @@
 # Smart-Agent-Memory
 
-> 让 AI Agent 拥有类似人类的记忆系统——5层记忆架构 + 自我进化 + 情感感知
+> 让 AI Agent 拥有类似人类的记忆系统——5层记忆架构 + 自我进化 + 情感感知 + **贝叶斯衰减引擎**
 
 ## 功能特性
 
@@ -11,6 +11,10 @@
 - 🧬 **自我进化** - 目标管理、反思、技能追踪
 - 😊 **情感感知** - 实时分析用户情绪，动态调整回复
 - 🖼️ **多模态记忆** - 支持图片/音频/视频存储
+- ⏱️ **贝叶斯衰减引擎** - 时间衰减 + 访问频率加权 + 冷却机制（v2.0新增）
+- 📋 **Case Template 判例提取** - 自动识别「情境/判断/后果/修正」四段式，有修正则+10%稳定性（v2.0新增）
+- 📦 **MEMORY.md 自动压缩** - 超过15KB自动归档30天前内容（v2.0新增）
+- 🌐 **社区知识导入器** - 从 MEMORY.md 和每日日志自动提取知识导入 L4（v2.0新增）
 
 ## 快速开始
 
@@ -126,6 +130,21 @@ print(evolve())
   "emotion_weights": {
     "positive_excitement": 1.5,
     "negative_frustration": 1.3
+  },
+  "decay_engine": {
+    "enabled": true,
+    "lambda_decay": 0.01,
+    "lifecycle_thresholds": {
+      "active": 0.2,
+      "archived": 0.05,
+      "deleted": 0.0
+    },
+    "access_params": {
+      "cooling_threshold": 5,
+      "cooling_penalty": 0.5,
+      "cooling_duration_minutes": 5
+    },
+    "correction_bonus": 1.1
   }
 }
 ```
@@ -161,22 +180,74 @@ Smart-Agent-Memory/
 ├── LICENSE                  # MIT 许可证
 ├── memory/
 │   ├── __init__.py          # 统一入口
-│   ├── memory_manager.py    # 5层记忆
+│   ├── memory_manager.py    # 5层记忆（含衰减引擎集成）
 │   ├── evolution_manager.py # 自我进化
 │   ├── vector_search.py    # 语义搜索
-│   ├── session_initializer.py # 跨会话
-│   ├── cleanup.py          # 自动清理
+│   ├── session_initializer.py # 跨会话（含启动时压缩检查）
+│   ├── cleanup.py          # 自动清理（含lifecycle管理）
 │   ├── emotion.py         # 情感感知
-│   ├── config.json         # 配置
+│   ├── decay_engine.py    # 贝叶斯衰减引擎（v2.0新增）
+│   ├── case_template.py   # Case Template判例提取（v2.0新增）
+│   ├── auto_compact.py    # MEMORY.md自动压缩（v2.0新增）
+│   ├── import_knowledge.py # 社区知识导入（v2.0新增）
+│   ├── config.json         # 配置（含衰减参数）
 │   ├── L1_working/       # L1 数据
 │   ├── L2_short_term/    # L2 数据
-│   ├── L3_mid_term/      # L3 数据
-│   ├── L4_long_term/     # L4 数据
-│   ├── L5_semantic/      # L5 数据
-│   └── multimodal/        # 多媒体
+│   ├── L3_mid_term/      # L3 数据（含归档目录）
+│   ├── L4_long_term/     # L4 数据（含archive/）
+│   └── L5_semantic/      # L5 数据
 └── examples/
     └── demo.py           # 示例代码
 ```
+
+## 贝叶斯衰减引擎（v2.0）
+
+核心公式：`decay_score = base_importance × recency_factor × access_factor`
+
+| 参数 | 公式 | 效果 |
+|------|------|------|
+| recency_factor | exp(-λ × 天数)，λ=0.01 | 约100天衰减到37% |
+| access_factor | 0.3 + 0.7 × log(1+访问次)/log(101) | 越频繁访问越稳定 |
+| 冷却机制 | 同一来源>5次访问 | access上限从1.0降至0.5 |
+
+三层生命周期：
+- decay ≥ 0.2 → **active**（正常加载）
+- 0.05 ≤ decay < 0.2 → **archived**（可搜索但不自动加载）
+- decay < 0.05 → **deleted**（待确认删除）
+
+**判例加成**：内容含「修正/教训/踩坑」→ +10% 稳定性
+
+## Case Template 判例提取（v2.0）
+
+自动识别四段式结构（情境/判断/后果/修正）：
+
+```python
+from memory.smart.case_template import extract_case
+
+case = extract_case(
+    "原本想用curl下载二维码，结果扫不出来，后来改成用浏览器截图"
+)
+# → CaseTemplate(
+#     situation="想用curl下载二维码",
+#     decision="用curl",
+#     consequence="扫不出来",
+#     correction="用浏览器截图",
+#     has_correction=True,
+#     confidence=0.4
+#   )
+# 判例加成 = 1.10 (+10% decay_score)
+```
+
+## 社区知识导入（v2.0）
+
+从 MEMORY.md 和每日日志自动提取知识导入 L4：
+
+```bash
+python memory/import_knowledge.py --from-memory-md  # 从MEMORY.md导入
+python memory/import_knowledge.py --all             # 导入所有来源
+```
+
+自动识别6类高价值内容：踩坑/教训、Agent经验、工具使用、配置参数、社区洞察、决策记录
 
 ## 依赖
 
