@@ -16,5 +16,29 @@
   "auto_cleanup": {
     "enabled": true,
     "schedule": "0 3 * * 0"
+  },
+  "decay_engine": {
+    "enabled": true,
+    "lambda_decay": 0.01,
+    "description": "λ=0.01，约100天衰减到37%。每次recall时计算: decay_score = base_importance × recency_factor × access_factor",
+    "lifecycle_thresholds": {
+      "active": 0.2,
+      "archived": 0.05,
+      "deleted": 0.0
+    },
+    "access_params": {
+      "cooling_threshold": 5,
+      "cooling_penalty": 0.5,
+      "cooling_duration_minutes": 5,
+      "max_access_count": 100
+    },
+    "correction_bonus": 1.1,
+    "description_corrections": ["修正", "教训", "错误", "踩坑"]
+  },
+  "memory_compaction": {
+    "enabled": true,
+    "target_size_kb": 10,
+    "archive_old_entries": true,
+    "dedup_threshold": 0.75
   }
 }
