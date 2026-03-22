@@ -5,6 +5,7 @@ Jarvis 跨会话记忆继承系统
 让 Jarvis 启动时自动加载历史记忆
 """
 import os
+import sys
 import json
 from pathlib import Path
 from datetime import datetime
@@ -33,6 +34,9 @@ class SessionInitializer:
         """
         print("[记忆继承] 开始加载历史记忆...")
         
+        # 检查 MEMORY.md 是否需要压缩
+        self._check_memory_md_compaction()
+        
         # 加载各层记忆
         self._load_L1()
         self._load_L2()
@@ -44,6 +48,19 @@ class SessionInitializer:
         print(f"[记忆继承] 加载完成: {summary['total']} 条记忆")
         
         return summary
+    
+    def _check_memory_md_compaction(self):
+        """检查 MEMORY.md 大小，超过阈值时自动压缩"""
+        try:
+            sys.path.insert(0, str(self.smart_dir))
+            from auto_compact import should_compact, compact_memory_md
+            
+            if should_compact():
+                print("[记忆压缩] MEMORY.md 超限，开始压缩...")
+                ok, msg = compact_memory_md()
+                print(f"[记忆压缩] {msg}")
+        except Exception as e:
+            print(f"[记忆压缩] 检查失败: {e}")
     
     def _load_L1(self):
         """加载 L1 工作记忆"""
