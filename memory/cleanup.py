@@ -1,283 +1,402 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Jarvis 记忆自动清理系统
-自动清理过期的 L2 短期记忆，支持定时任务
+Smart-Memory Scheduled Cleanup Script
+Runs daily to organize memories, upgrade decisions, generate reports
 """
+
 import os
+import sys
 import json
-from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
-import shutil
+from pathlib import Path
 
-# 基础路径
-SMART_DIR = Path(__file__).parent
+# Add path
+BASE_DIR = Path(__file__).parent  # memory/smart
+sys.path.insert(0, str(BASE_DIR))
+
+# Force UTF-8
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 
-class MemoryCleanup:
-    """记忆自动清理器"""
+def cleanup_short_term():
+    """Clean up expired short-term memories"""
+    print("\n[1/4] Cleaning short-term memories...")
     
-    def __init__(self, ttl_days: int = 7):
-        self.ttl_days = ttl_days
-        self.cleanup_log = []
+    L2_DIR = BASE_DIR / "L2_short_term"
+    cutoff = datetime.now() - timedelta(days=7)
+    cleaned = 0
     
-    def cleanup(self, dry_run: bool = False) -> Dict:
-        """
-        执行清理
-        
-        Args:
-            dry_run: True 则只报告不删除
-            
-        Returns:
-            清理报告
-        """
-        report = {
-            "timestamp": datetime.now().isoformat(),
-            "dry_run": dry_run,
-            "L2_deleted": [],
-            "L2_promoted": [],
-            "L3_deleted": [],
-            "total_freed": 0,
-            "errors": []
-        }
-        
-        # 清理 L2 短期记忆
-        self._cleanup_L2(report, dry_run)
-        
-        # 清理 L3 过期事件
-        self._cleanup_L3(report, dry_run)
-        
-        # 清理旧日志
-        self._cleanup_logs(report, dry_run)
-        
-        return report
+    for f in L2_DIR.glob("*.json"):
+        try:
+            mtime = datetime.fromtimestamp(f.stat().st_mtime)
+            if mtime < cutoff:
+                f.unlink()
+                cleaned += 1
+        except Exception as e:
+            print(f"  Failed: {f.name} - {e}")
     
-    def _cleanup_L2(self, report: Dict, dry_run: bool):
-        """清理 L2 短期记忆"""
-        l2_dir = SMART_DIR / "L2_short_term"
-        
-        if not l2_dir.exists():
-            return
-        
-        cutoff = datetime.now() - timedelta(days=self.ttl_days)
-        
-        for file in l2_dir.glob("*.json"):
-            try:
-                file_date = datetime.strptime(file.stem, "%Y-%m-%d")
-                
-                if file_date < cutoff:
-                    # 读取内容检查重要性
-                    with open(file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    
-                    # 检查是否需要升级到 L3
-                    promoted = self._check_promotion(data.get("memories", []))
-                    
-                    if promoted and not dry_run:
-                        self._promote_to_L3(promoted)
-                        report["L2_promoted"].append({
-                            "file": file.name,
-                            "count": len(promoted)
-                        })
-                    
-                    # 删除文件
-                    if not dry_run:
-                        file.unlink()
-                        report["L2_deleted"].append(file.name)
-                    
-                    report["total_freed"] += 1
-                    
-            except Exception as e:
-                report["errors"].append(f"L2 cleanup error: {e}")
+    print(f"  Cleaned {cleaned} expired files")
+
+
+def check_mid_term_upgrades():
+    """Check L3 upgrades"""
+    print("\n[2/4] Checking L3 mid-term memories...")
     
-    def _check_promotion(self, memories: List) -> List:
-        """检查哪些记忆需要升级到 L3"""
-        threshold = 5  # 重要性阈值
-        to_promote = []
-        
-        for mem in memories:
-            score = mem.get("metadata", {}).get("importance_score", 0)
-            if score >= threshold:
-                to_promote.append(mem)
-        
-        return to_promote
+    L3_DIR = BASE_DIR / "L3_mid_term" / "events"
+    events = list(L3_DIR.glob("*.json"))
     
-    def _promote_to_L3(self, memories: List):
-        """升级到 L3"""
-        l3_dir = SMART_DIR / "L3_mid_term" / "events"
-        l3_dir.mkdir(parents=True, exist_ok=True)
+    print(f"  L3 events: {len(events)}")
+    
+    # L4 upgrade threshold check
+    L4_DIR = BASE_DIR / "L4_long_term"
+    l4_file = L4_DIR / "memories.json"
+
+    # 刷新所有L4记忆的lifecycle状态（衰减引擎）
+    try:
+        sys.path.insert(0, str(BASE_DIR))
+        from memory_manager import get_memory_manager
+        mm = get_memory_manager()
+        mm.get_long_term_memories(refresh_status=True, use_access_count=False)
+        print(f"  [Decay] L4 lifecycle status refreshed")
+    except Exception as e:
+        print(f"  [Decay] Refresh skipped: {e}")
+    
+    if l4_file.exists():
+        with open(l4_file, 'r', encoding='utf-8') as f:
+            l4_data = json.load(f)
+    else:
+        l4_data = {"memories": []}
+    
+    for event_file in events[:5]:
+        with open(event_file, 'r', encoding='utf-8') as f:
+            event = json.load(f)
         
-        for mem in memories:
-            today = datetime.now().strftime("%Y-%m-%d")
-            filename = f"{today}_auto_{mem.get('id', 'unk')}.json"
-            
-            event_data = {
-                "original_content": mem.get("content", ""),
-                "importance_score": mem.get("metadata", {}).get("importance_score", 0),
-                "promoted_at": datetime.now().isoformat(),
-                "auto_promoted": True,
-                "metadata": mem.get("metadata", {})
+        score = event.get("importance_score", 0)
+        if score >= 8 and not any(m.get("source") == event_file.name for m in l4_data.get("memories", [])):
+            # Upgrade to L4
+            memory_entry = {
+                "id": len(l4_data["memories"]) + 1,
+                "content": event.get("original_content", ""),
+                "tags": ["auto_upgraded", "high_importance"],
+                "source": event_file.name,
+                "created_at": datetime.now().isoformat(),
+                "access_count": 0
             }
+            l4_data["memories"].append(memory_entry)
+            print(f"  Upgraded to L4: {event_file.name}")
+    
+    with open(l4_file, 'w', encoding='utf-8') as f:
+        json.dump(l4_data, f, ensure_ascii=False, indent=2)
+
+
+def update_long_term_stats():
+    """Update long-term memory stats"""
+    print("\n[3/4] Updating L4 stats...")
+    
+    L4_DIR = BASE_DIR / "L4_long_term"
+    l4_file = L4_DIR / "memories.json"
+    
+    if l4_file.exists():
+        with open(l4_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        count = len(data.get("memories", []))
+        print(f"  L4 memories: {count}")
+    else:
+        print("  L4 memories: 0")
+
+
+def generate_report():
+    """Generate cleanup report"""
+    print("\n[4/4] Generating report...")
+    
+    l4_file = BASE_DIR / "L4_long_term" / "memories.json"
+    l4_count = 0
+    if l4_file.exists():
+        with open(l4_file, 'r', encoding='utf-8') as f:
+            l4_data = json.load(f)
+            l4_count = len(l4_data.get("memories", []))
+    
+    report = {
+        "run_time": datetime.now().isoformat(),
+        "L1_working": "in_memory",
+        "L2_short_term": len(list((BASE_DIR / "L2_short_term").glob("*.json"))),
+        "L3_mid_term": len(list((BASE_DIR / "L3_mid_term" / "events").glob("*.json"))),
+        "L4_long_term": l4_count,
+        "L5_semantic": len(list((BASE_DIR / "L5_semantic").glob("*.json"))),
+    }
+    
+    report_file = BASE_DIR / "cleanup_report.json"
+    with open(report_file, 'w', encoding='utf-8') as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    
+    print(f"  Report: cleanup_report.json")
+    return report
+
+
+def cleanup_l3_events():
+    """
+    检查 L3 中期记忆的衰减状态
+    - active: 保留
+    - archived: 保持原样（可被搜索但不加权重）
+    - deleted: 标记，待确认后删除
+    """
+    print("\n[NEW] Checking L3 lifecycle decay...")
+    
+    try:
+        sys.path.insert(0, str(BASE_DIR))
+        from memory_manager import get_memory_manager
+        # 直接导入脚本逻辑（避免循环import）
+    except:
+        pass
+    
+    # 使用简化逻辑（避免依赖）
+    import math
+    L3_DIR = BASE_DIR / "L3_mid_term" / "events"
+    L3_ARCHIVE_DIR = BASE_DIR / "L3_mid_term" / "archive"
+    L3_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    events = list(L3_DIR.glob("*.json"))
+    active, archived, deleted = [], [], []
+    
+    for event_file in events:
+        try:
+            with open(event_file, 'r', encoding='utf-8') as f:
+                event = json.load(f)
             
-            with open(l3_dir / filename, 'w', encoding='utf-8') as f:
-                json.dump(event_data, f, ensure_ascii=False, indent=2)
-    
-    def _cleanup_L3(self, report: Dict, dry_run: bool):
-        """清理 L3 过期事件（保留90天）"""
-        l3_dir = SMART_DIR / "L3_mid_term" / "events"
-        
-        if not l3_dir.exists():
-            return
-        
-        cutoff = datetime.now() - timedelta(days=90)
-        
-        for file in l3_dir.glob("*.json"):
+            created_at = event.get('promoted_at', event.get('created_at', datetime.now().isoformat()))
+            importance = event.get('importance_score', 0)
+            base_importance = importance / 10.0
+            
+            # 计算衰减
             try:
-                # 从文件名提取日期
-                parts = file.stem.split("_")
-                if len(parts) >= 1:
-                    file_date = datetime.strptime(parts[0], "%Y-%m-%d")
-                    
-                    if file_date < cutoff:
-                        if not dry_run:
-                            file.unlink()
-                            report["L3_deleted"].append(file.name)
-                        
-                        report["total_freed"] += 1
-                        
-            except Exception as e:
-                report["errors"].append(f"L3 cleanup error: {e}")
-    
-    def _cleanup_logs(self, report: Dict, dry_run: bool):
-        """清理旧日志文件"""
-        # 清理 memory 目录下的旧日志（保留30天）
-        memory_dir = SMART_DIR.parent
-        
-        if not memory_dir.exists():
-            return
-        
-        cutoff = datetime.now() - timedelta(days=30)
-        
-        for file in memory_dir.glob("*.md"):
-            try:
-                if file.stat().st_mtime < cutoff.timestamp():
-                    # 不删除 MEMORY.md, AGENTS.md, USER.md 等核心文件
-                    if file.name not in ["MEMORY.md", "AGENTS.md", "USER.md", "SOUL.md"]:
-                        if not dry_run:
-                            # 移动到 trash 而不是删除
-                            trash_dir = memory_dir / "trash"
-                            trash_dir.mkdir(exist_ok=True)
-                            shutil.move(str(file), str(trash_dir / file.name))
+                created = datetime.fromisoformat(created_at.replace('Z', '+00:0'))
+                days = (datetime.now() - created.replace(tzinfo=None)).total_seconds() / 86400
+                recency = math.exp(-0.01 * days)
             except:
-                pass
+                recency = 0.5
+            
+            access_factor = 0.3 + 0.7 * math.log(2) / math.log(101)
+            decay_score = base_importance * recency * access_factor
+            
+            if decay_score >= 0.2:
+                status = "active"
+                active.append((event_file, event))
+            elif decay_score >= 0.05:
+                status = "archived"
+                archived.append((event_file, event))
+            else:
+                status = "deleted"
+                deleted.append((event_file, event))
+            
+            event['decay_score'] = round(decay_score, 4)
+            event['lifecycle_status'] = status
+            
+            with open(event_file, 'w', encoding='utf-8') as f:
+                json.dump(event, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"  L3 error: {event_file.name} - {e}")
     
-    def schedule_cleanup(self) -> str:
-        """生成定时任务命令"""
-        # 返回 cron 命令
-        # 每周日凌晨3点执行清理
-        return """
-# 添加到 crontab (每周日凌晨3点自动清理)
-0 3 * * 0 cd /path/to/workspace && python memory/smart/cleanup.py --auto
-
-# 或者使用 Windows 计划任务
-schtasks /create /tn "Jarvis Memory Cleanup" /tr "python memory\\smart\\cleanup.py --auto" /sc weekly /d SUN /st 03:00
-"""
+    print(f"  L3 events: total={len(events)}, active={len(active)}, archived={len(archived)}, deleted={len(deleted)}")
     
-    def get_storage_stats(self) -> Dict:
-        """获取存储统计"""
-        stats = {
-            "L1": 0,
-            "L2_files": 0,
-            "L2_memories": 0,
-            "L3_events": 0,
-            "L4_memories": 0,
-            "L5_concepts": 0,
-            "total_size_kb": 0
-        }
-        
-        # L1
-        l1_file = SMART_DIR / "L1_working" / "session.json"
-        if l1_file.exists():
-            stats["L1"] = l1_file.stat().st_size
-        
-        # L2
-        l2_dir = SMART_DIR / "L2_short_term"
-        if l2_dir.exists():
-            stats["L2_files"] = len(list(l2_dir.glob("*.json")))
-            for f in l2_dir.glob("*.json"):
-                stats["total_size_kb"] += f.stat().st_size / 1024
-                try:
-                    with open(f, 'r', encoding='utf-8') as fp:
-                        data = json.load(fp)
-                        stats["L2_memories"] += len(data.get("memories", []))
-                except:
-                    pass
-        
-        # L3
-        l3_dir = SMART_DIR / "L3_mid_term" / "events"
-        if l3_dir.exists():
-            stats["L3_events"] = len(list(l3_dir.glob("*.json")))
-        
-        # L4
-        l4_file = SMART_DIR / "L4_long_term" / "memories.json"
-        if l4_file.exists():
-            with open(l4_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                stats["L4_memories"] = len(data.get("memories", []))
-            stats["total_size_kb"] += l4_file.stat().st_size / 1024
-        
-        # L5
-        l5_file = SMART_DIR / "L5_semantic" / "concepts.json"
-        if l5_file.exists():
-            with open(l5_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                stats["L5_concepts"] = len(data.get("concepts", []))
-        
-        stats["total_size_kb"] = round(stats["total_size_kb"], 2)
-        
-        return stats
+    # 将 deleted L3 移到归档
+    for event_file, event in deleted:
+        archive_name = event_file.stem + "_deleted.json"
+        archive_path = L3_ARCHIVE_DIR / archive_name
+        event['deleted_at'] = datetime.now().isoformat()
+        try:
+            with open(archive_path, 'w', encoding='utf-8') as f:
+                json.dump(event, f, ensure_ascii=False, indent=2)
+            event_file.unlink()
+            print(f"  Deleted L3: {event_file.name}")
+        except Exception as e:
+            print(f"  Failed to archive L3: {e}")
+    
+    return len(active), len(archived), len(deleted)
 
 
-def get_cleanup_manager(ttl_days: int = 7) -> MemoryCleanup:
-    """获取清理管理器"""
-    return MemoryCleanup(ttl_days)
+def cleanup_archived_memories():
+    """
+    处理 L4 中 archived/deleted 状态的记忆
+    - archived -> 移入独立归档文件（可搜索但不参与主文件）
+    - deleted  -> 移入待删除队列（超过30天确认删除）
+    """
+    print("\n[NEW] Processing archived/deleted L4 memories...")
+    
+    L4_DIR = BASE_DIR / "L4_long_term"
+    l4_file = L4_DIR / "memories.json"
+    ARCHIVE_DIR = L4_DIR / "archive"
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    if not l4_file.exists():
+        print("  L4 file not found, skipping")
+        return
+    
+    with open(l4_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    all_memories = data.get("memories", [])
+    active = [m for m in all_memories if m.get("lifecycle_status") == "active"]
+    archived = [m for m in all_memories if m.get("lifecycle_status") == "archived"]
+    deleted = [m for m in all_memories if m.get("lifecycle_status") == "deleted"]
+    
+    print(f"  Active: {len(active)} | Archived: {len(archived)} | Deleted: {len(deleted)}")
+    
+    # 处理 archived：移入归档文件
+    pending_file = ARCHIVE_DIR / "pending_delete.json"
+    
+    if archived:
+        archive_file = ARCHIVE_DIR / f"archived_{datetime.now().strftime('%Y-%m-%d')}.json"
+        archived_data = {"archived_at": datetime.now().isoformat(), "memories": archived}
+        with open(archive_file, 'w', encoding='utf-8') as f:
+            json.dump(archived_data, f, ensure_ascii=False, indent=2)
+        print(f"  Archived {len(archived)} memories -> {archive_file.name}")
+    
+    # 处理 deleted：移入 pending_delete 文件
+    if deleted:
+        existing_pending = []
+        if pending_file.exists():
+            with open(pending_file, 'r', encoding='utf-8') as f:
+                existing_pending = json.load(f).get("memories", [])
+        
+        # 合并，标注删除时间
+        for mem in deleted:
+            mem["deleted_at"] = datetime.now().isoformat()
+        all_pending = existing_pending + deleted
+        
+        with open(pending_file, 'w', encoding='utf-8') as f:
+            json.dump({"memories": all_pending, "updated_at": datetime.now().isoformat()}, f, ensure_ascii=False, indent=2)
+        print(f"  Moved {len(deleted)} deleted memories -> pending_delete.json")
+    
+    # 重写主文件，只保留 active
+    data["memories"] = active
+    with open(l4_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    
+    print(f"  L4 main file now has {len(active)} active memories")
+    
+    # 清理超过30天的 pending_delete
+    if pending_file.exists():
+        with open(pending_file, 'r', encoding='utf-8') as f:
+            pending_data = json.load(f)
+        
+        remaining = []
+        confirmed_deleted = 0
+        for mem in pending_data.get("memories", []):
+            deleted_at = datetime.fromisoformat(mem.get("deleted_at", "2000-01-01"))
+            if (datetime.now() - deleted_at).days > 30:
+                confirmed_deleted += 1
+            else:
+                remaining.append(mem)
+        
+        if confirmed_deleted > 0:
+            pending_data["memories"] = remaining
+            with open(pending_file, 'w', encoding='utf-8') as f:
+                json.dump(pending_data, f, ensure_ascii=False, indent=2)
+            print(f"  Confirmed deleted {confirmed_deleted} memories (30+ days old)")
+    
+    return len(archived), len(deleted)
+
+
+def compact_long_term_memories():
+    """
+    记忆压缩（参考 Memory Guardian 思路）
+    1. 检查 MEMORY.md 大小，超过阈值则归档旧内容
+    2. 识别并合并重复内容
+    3. 将已归档内容移至 archive 目录
+    """
+    print("\n[5/5] Running memory compaction...")
+    
+    WORKSPACE_DIR = BASE_DIR.parent.parent  # workspace/
+    MEMORY_MD = WORKSPACE_DIR / "MEMORY.md"
+    ARCHIVE_DIR = L4_DIR = BASE_DIR / "L4_long_term"
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    if not MEMORY_MD.exists():
+        print("  MEMORY.md not found, skipping")
+        return
+    
+    size_kb = MEMORY_MD.stat().st_size / 1024
+    target_kb = 10  # 目标不超过10KB
+    
+    if size_kb <= target_kb:
+        print("  Size OK, no compaction needed")
+        return
+    
+    print(f"  Size exceeds target, archiving older entries...")
+    
+    # 读取当前 MEMORY.md
+    with open(MEMORY_MD, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    # 找到非头部内容的部分（假设前20行是头部）
+    # 保留头部和最近的内容
+    keep_lines = []
+    archived_count = 0
+    cutoff_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    
+    archive_content = []
+    is_archived = False
+    
+    for line in lines:
+        # 检测日期标记
+        if "## " in line and any(marker in line for marker in ["## 20", "## MEMORY"]):
+            date_marker = line.split("## ")[-1].strip()[:10]
+            if date_marker < cutoff_date and date_marker.startswith("20"):
+                is_archived = True
+        
+        if is_archived:
+            archive_content.append(line)
+            archived_count += 1
+        else:
+            keep_lines.append(line)
+    
+    if archive_content:
+        # 保存归档
+        archive_file = ARCHIVE_DIR / f"archive_{datetime.now().strftime('%Y-%m-%d')}.md"
+        with open(archive_file, 'w', encoding='utf-8') as f:
+            f.write("# 归档记忆 (来自 MEMORY.md)\n")
+            f.write(f"# 归档时间: {datetime.now().isoformat()}\n\n")
+            f.writelines(archive_content)
+        print(f"  Archived {archived_count} lines to {archive_file.name}")
+        
+        # 重写 MEMORY.md
+        with open(MEMORY_MD, 'w', encoding='utf-8') as f:
+            f.writelines(keep_lines)
+        
+        new_size_kb = MEMORY_MD.stat().st_size / 1024
+        print(f"  MEMORY.md reduced to {new_size_kb:.1f} KB")
+    else:
+        print("  No archiveable content found")
+
+
+def main():
+    print("=" * 50)
+    print("Smart-Memory Scheduled Cleanup + Compaction")
+    print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 50)
+    
+    try:
+        cleanup_short_term()
+        check_mid_term_upgrades()  # 同时刷新了L4 lifecycle
+        cleanup_l3_events()  # 新增: L3 events 衰减检查
+        cleanup_archived_memories()  # 处理 archived/deleted
+        compact_long_term_memories()  # MEMORY.md 压缩
+        update_long_term_stats()
+        report = generate_report()
+        
+        print("\n" + "=" * 50)
+        print("Cleanup Complete!")
+        print(f"L2: {report['L2_short_term']} | L3: {report['L3_mid_term']} | L4: {report['L4_long_term']}")
+        print("=" * 50)
+        
+    except Exception as e:
+        print(f"\nError: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    import sys
-    
-    # 检查是否是自动模式
-    auto_mode = "--auto" in sys.argv
-    dry_run = "--dry-run" in sys.argv
-    
-    cleanup = get_cleanup_manager()
-    
-    if auto_mode:
-        print("[自动清理] 开始执行清理...")
-        report = cleanup.cleanup(dry_run=dry_run)
-        
-        print(f"\n[清理报告]")
-        print(f"  时间: {report['timestamp']}")
-        print(f"  模式: {'模拟' if dry_run else '实际'}")
-        print(f"  L2文件删除: {len(report['L2_deleted'])}")
-        print(f"  L2升级L3: {len(report['L2_promoted'])}")
-        print(f"  L3事件删除: {len(report['L3_deleted'])}")
-        print(f"  总计释放: {report['total_freed']} 项")
-        
-        if report['errors']:
-            print(f"  错误: {report['errors']}")
-    else:
-        # 显示存储统计
-        stats = cleanup.get_storage_stats()
-        print("[存储统计]")
-        print(f"  L1 (工作记忆): {stats['L1']} bytes")
-        print(f"  L2 (短期记忆): {stats['L2_files']} 文件, {stats['L2_memories']} 条")
-        print(f"  L3 (中期记忆): {stats['L3_events']} 事件")
-        print(f"  L4 (长期记忆): {stats['L4_memories']} 条")
-        print(f"  L5 (语义记忆): {stats['L5_concepts']} 概念")
-        print(f"  总大小: {stats['total_size_kb']} KB")
-        
-        print("\n[使用方法]")
-        print("  python cleanup.py --auto      # 自动清理")
-        print("  python cleanup.py --dry-run  # 模拟清理")
+    main()
